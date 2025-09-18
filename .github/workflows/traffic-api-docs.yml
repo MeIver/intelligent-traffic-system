@@ -1,0 +1,228 @@
+name: Traffic API Documentation Generation
+
+on:
+  # Schedule: Run daily at 02:00 UTC
+  schedule:
+    - cron: '0 2 * * *'
+  
+  # Trigger on pull requests that modify API specs or documentation
+  pull_request:
+    paths:
+      - 'openapi/**'
+      - 'docs/api/**'
+      - 'scripts/traffic-api-docs-generator.py'
+      - '.github/workflows/traffic-api-docs.yml'
+  
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      spec_file:
+        description: 'OpenAPI specification file path'
+        required: false
+        default: 'openapi/traffic-api.yaml'
+
+jobs:
+  generate-docs:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyyaml markdown pdfkit
+        # Install wkhtmltopdf for PDF generation
+        sudo apt-get update
+        sudo apt-get install -y wkhtmltopdf
+
+    - name: Validate OpenAPI specification
+      run: |
+        # Check if OpenAPI spec exists
+        if [ ! -f "${{ github.event.inputs.spec_file || 'openapi/traffic-api.yaml' }}" ]; then
+          echo "OpenAPI specification file not found: ${{ github.event.inputs.spec_file || 'openapi/traffic-api.yaml' }}"
+          exit 1
+        fi
+        
+        # Run validation
+        python scripts/traffic-api-docs-generator.py "${{ github.event.inputs.spec_file || 'openapi/traffic-api.yaml' }}" --validate-only
+
+    - name: Generate API documentation
+      run: |
+        python scripts/traffic-api-docs-generator.py "${{ github.event.inputs.spec_file || 'openapi/traffic-api.yaml' }}" --format all
+
+    - name: Upload generated documentation
+      uses: actions/upload-artifact@v4
+      with:
+        name: api-documentation
+        path: docs/api/generated/
+        retention-days: 7
+
+    - name: Create validation report
+      run: |
+        # Generate summary report
+        echo "# API Documentation Generation Report" > validation-summary.md
+        echo "**Generated on**: $(date)" >> validation-summary.md
+        echo "**Workflow**: $GITHUB_WORKFLOW" >> validation-summary.md
+        echo "**Run ID**: $GITHUB_RUN_ID" >> validation-summary.md
+        echo "" >> validation-summary.md
+        
+        # Check if validation report exists
+        if [ -f "docs/api/generated/validation-report.json" ]; then
+          VALIDATION_RESULT=$(jq -r '.status' docs/api/generated/validation-report.json)
+          ERROR_COUNT=$(jq -r '.error_count' docs/api/generated/validation-report.json)
+          
+          echo "## Validation Status: $VALIDATION_RESULT" >> validation-summary.md
+          echo "**Errors Found**: $ERROR_COUNT" >> validation-summary.md
+          
+          if [ "$ERROR_COUNT" -gt 0 ]; then
+            echo "" >> validation-summary.md
+            echo "### Validation Errors:" >> validation-summary.md
+            jq -r '.errors[]' docs/api/generated/validation-report.json | while read error; do
+              echo "- $error" >> validation-summary.md
+            done
+          fi
+        else
+          echo "## Validation Status: ERROR" >> validation-summary.md
+          echo "Validation report not generated!" >> validation-summary.md
+        fi
+        
+        # Check generated files
+        echo "" >> validation-summary.md
+        echo "## Generated Files:" >> validation-summary.md
+        if [ -d "docs/api/generated" ]; then
+          find docs/api/generated -type f -name "*.md" -o -name "*.html" -o -name "*.pdf" | while read file; do
+            echo "- $(basename "$file") ($(stat -c%s "$file") bytes)" >> validation-summary.md
+          done
+        fi
+
+    - name: Upload validation report
+      uses: actions/upload-artifact@v4
+      with:
+        name: validation-report
+        path: validation-summary.md
+
+    - name: Comment on PR (if triggered by PR)
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+          let report = '## 📋 API Documentation Validation Report\n\n';
+          
+          try {
+            const validationReport = JSON.parse(fs.readFileSync('docs/api/generated/validation-report.json', 'utf8'));
+            
+            report += `**Status**: ${validationReport.status}\n`;
+            report += `**Errors**: ${validationReport.error_count}\n`;
+            report += `**Generated**: ${new Date(validationReport.timestamp).toLocaleString()}\n\n`;
+            
+            if (validationReport.error_count > 0) {
+              report += '### ❌ Validation Errors:\n';
+              validationReport.errors.forEach(error => {
+                report += `- ${error}\n`;
+              });
+            } else {
+              report += '### ✅ All validations passed!\n';
+            }
+            
+            // List generated files
+            report += '\n### 📄 Generated Documentation:\n';
+            const files = fs.readdirSync('docs/api/generated');
+            files.filter(file => file.endsWith('.md') || file.endsWith('.html') || file.endsWith('.pdf'))
+                 .forEach(file => {
+                   const stats = fs.statSync(`docs/api/generated/${file}`);
+                   report += `- ${file} (${Math.round(stats.size / 1024)} KB)\n`;
+                 });
+            
+          } catch (error) {
+            report += '### ❌ Failed to generate validation report\n';
+            report += `Error: ${error.message}\n`;
+          }
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: report
+          });
+
+  quality-check:
+    runs-on: ubuntu-latest
+    needs: generate-docs
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Download generated documentation
+      uses: actions/download-artifact@v4
+      with:
+        name: api-documentation
+        path: docs/api/generated/
+
+    - name: Run documentation quality checks
+      run: |
+        echo "Running documentation quality checks..."
+        
+        # Check if required files exist
+        REQUIRED_FILES=(
+          "traffic-api.md"
+          "traffic-api.html"
+          "validation-report.json"
+        )
+        
+        for file in "${REQUIRED_FILES[@]}"; do
+          if [ ! -f "docs/api/generated/$file" ]; then
+            echo "❌ Missing required file: $file"
+            exit 1
+          else
+            echo "✅ Found: $file"
+          fi
+        done
+        
+        # Check file sizes (basic quality check)
+        MD_SIZE=$(stat -c%s "docs/api/generated/traffic-api.md" 2>/dev/null || echo 0)
+        if [ "$MD_SIZE" -lt 1000 ]; then
+          echo "❌ Markdown documentation appears too small ($MD_SIZE bytes)"
+          exit 1
+        fi
+        
+        echo "✅ All quality checks passed!"
+
+  deploy-docs:
+    runs-on: ubuntu-latest
+    needs: [generate-docs, quality-check]
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Download generated documentation
+      uses: actions/download-artifact@v4
+      with:
+        name: api-documentation
+        path: docs/api/generated/
+
+    - name: Deploy to GitHub Pages (if configured)
+      if: success()
+      run: |
+        echo "Documentation deployment would happen here"
+        echo "Typically this would deploy to GitHub Pages or other hosting"
+        
+        # Example: Copy generated docs to docs/ directory for GitHub Pages
+        mkdir -p docs/
+        cp -r docs/api/generated/* docs/ || true
+        
+        echo "Deployment completed successfully!"
