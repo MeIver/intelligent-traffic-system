@@ -1,0 +1,413 @@
+openapi: 3.0.0
+info:
+  title: Intelligent Traffic System API
+  description: REST API for real-time traffic management, monitoring, and optimization
+  version: 1.0.0
+  contact:
+    name: Traffic System Team
+    email: traffic@example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.traffic.example.com/v1
+    description: Production server
+  - url: https://staging.traffic.example.com/v1
+    description: Staging server
+  - url: http://localhost:3000/v1
+    description: Local development
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: API key authentication
+  
+  schemas:
+    TrafficFlow:
+      type: object
+      description: Real-time traffic flow data
+      properties:
+        vehicle_count:
+          type: integer
+          description: Number of vehicles detected
+          example: 1250
+        average_speed:
+          type: number
+          format: float
+          description: Average speed in km/h
+          example: 45.2
+        congestion_level:
+          type: string
+          enum: [LOW, MODERATE, HIGH, SEVERE]
+          description: Traffic congestion level
+          example: MODERATE
+        timestamp:
+          type: string
+          format: date-time
+          description: Data collection timestamp
+          example: "2024-01-15T10:30:00Z"
+        predicted_trend:
+          type: string
+          enum: [INCREASING, DECREASING, STABLE]
+          description: Predicted traffic trend
+          example: INCREASING
+      required:
+        - vehicle_count
+        - average_speed
+        - congestion_level
+        - timestamp
+
+    TrafficIncident:
+      type: object
+      description: Traffic incident report
+      properties:
+        id:
+          type: string
+          description: Unique incident identifier
+          example: "inc_001"
+        type:
+          type: string
+          enum: [ACCIDENT, CONSTRUCTION, ROAD_CLOSURE, WEATHER, OTHER]
+          description: Type of incident
+          example: ACCIDENT
+        location:
+          $ref: '#/components/schemas/GeoLocation'
+        severity:
+          type: string
+          enum: [LOW, MEDIUM, HIGH, CRITICAL]
+          description: Incident severity level
+          example: HIGH
+        description:
+          type: string
+          description: Detailed incident description
+          example: "Multi-vehicle collision on main road"
+        start_time:
+          type: string
+          format: date-time
+          description: When the incident started
+          example: "2024-01-15T10:25:00Z"
+        estimated_clearance:
+          type: string
+          format: date-time
+          description: Estimated time when incident will be cleared
+          example: "2024-01-15T11:30:00Z"
+        affected_lanes:
+          type: array
+          items:
+            type: integer
+          description: Which lanes are affected
+          example: [1, 2]
+        status:
+          type: string
+          enum: [ACTIVE, RESOLVED, FALSE_ALARM]
+          description: Current incident status
+          example: ACTIVE
+      required:
+        - type
+        - location
+        - severity
+        - description
+
+    TrafficSignal:
+      type: object
+      description: Traffic signal control information
+      properties:
+        id:
+          type: string
+          description: Signal identifier
+          example: "signal_001"
+        location:
+          $ref: '#/components/schemas/GeoLocation'
+        current_pattern:
+          type: string
+          enum: [NORMAL, EMERGENCY, PEDESTRIAN, MAINTENANCE]
+          description: Current signal pattern
+          example: NORMAL
+        phase_timings:
+          type: object
+          properties:
+            green:
+              type: integer
+              description: Green light duration in seconds
+              example: 30
+            yellow:
+              type: integer
+              description: Yellow light duration in seconds
+              example: 5
+            red:
+              type: integer
+              description: Red light duration in seconds
+              example: 25
+        status:
+          type: string
+          enum: [OPERATIONAL, OFFLINE, MAINTENANCE]
+          description: Signal status
+          example: OPERATIONAL
+        last_maintenance:
+          type: string
+          format: date-time
+          description: Last maintenance date
+          example: "2024-01-10T08:00:00Z"
+      required:
+        - id
+        - location
+        - current_pattern
+        - status
+
+    GeoLocation:
+      type: object
+      description: Geographic location coordinates
+      properties:
+        latitude:
+          type: number
+          format: float
+          description: Latitude coordinate
+          example: 40.7128
+        longitude:
+          type: number
+          format: float
+          description: Longitude coordinate
+          example: -74.0060
+        street:
+          type: string
+          description: Street name
+          example: "Main Street"
+        intersection:
+          type: string
+          description: Intersection name
+          example: "5th Avenue"
+      required:
+        - latitude
+        - longitude
+
+  responses:
+    UnauthorizedError:
+      description: Authentication failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    
+    RateLimitError:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: "RATE_LIMIT_EXCEEDED"
+            message:
+              type: string
+              example: "Rate limit of 1000 requests per hour exceeded"
+            details:
+              type: object
+            request_id:
+              type: string
+              example: "req_123456789"
+            timestamp:
+              type: string
+              format: date-time
+              example: "2024-01-15T10:30:00Z"
+
+paths:
+  /traffic/real-time:
+    get:
+      summary: Get real-time traffic data
+      description: Retrieve current traffic conditions for a specific location
+      parameters:
+        - name: location
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/GeoLocation'
+          description: Geographic coordinates or area ID
+        - name: radius
+          in: query
+          schema:
+            type: integer
+            default: 1000
+          description: Search radius in meters
+        - name: sensor_types
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          description: Comma-separated sensor types to include
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficFlow'
+        '400':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+      security:
+        - ApiKeyAuth: []
+
+  /traffic/incidents:
+    post:
+      summary: Report a traffic incident
+      description: Submit a new traffic incident report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrafficIncident'
+      responses:
+        '201':
+          description: Incident created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficIncident'
+        '400':
+          description: Invalid incident data
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+      security:
+        - ApiKeyAuth: []
+
+  /control/signals/{signal_id}:
+    parameters:
+      - name: signal_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Traffic signal identifier
+    
+    get:
+      summary: Get traffic signal status
+      description: Retrieve current status and configuration of a traffic signal
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficSignal'
+        '404':
+          description: Signal not found
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+      security:
+        - ApiKeyAuth: []
+    
+    put:
+      summary: Update traffic signal configuration
+      description: Adjust traffic signal patterns and timings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pattern:
+                  type: string
+                  enum: [NORMAL, EMERGENCY, PEDESTRIAN, MAINTENANCE]
+                duration:
+                  type: integer
+                  description: Pattern duration in seconds
+                priority:
+                  type: string
+                  enum: [LOW, MEDIUM, HIGH]
+      responses:
+        '200':
+          description: Signal updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficSignal'
+        '400':
+          description: Invalid configuration
+        '404':
+          description: Signal not found
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+      security:
+        - ApiKeyAuth: []
+
+  /routes/calculate:
+    post:
+      summary: Calculate optimal route
+      description: Compute the best route between two points considering current traffic
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                origin:
+                  $ref: '#/components/schemas/GeoLocation'
+                destination:
+                  $ref: '#/components/schemas/GeoLocation'
+                vehicle_type:
+                  type: string
+                  enum: [CAR, TRUCK, BUS, EMERGENCY]
+                preferences:
+                  type: object
+                  properties:
+                    avoid_tolls:
+                      type: boolean
+                    minimize_time:
+                      type: boolean
+                    avoid_highways:
+                      type: boolean
+      responses:
+        '200':
+          description: Route calculated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  distance:
+                    type: number
+                    description: Route distance in meters
+                  duration:
+                    type: number
+                    description: Estimated travel time in seconds
+                  polyline:
+                    type: string
+                    description: Encoded route polyline
+                  steps:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        instruction:
+                          type: string
+                        distance:
+                          type: number
+                        duration:
+                          type: number
+        '400':
+          description: Invalid route parameters
+        '404':
+          description: No valid route found
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+      security:
+        - ApiKeyAuth: []
+
+security:
+  - ApiKeyAuth: []
