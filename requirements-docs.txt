@@ -1,0 +1,21 @@
+# Requirements for Intelligent Traffic System API Documentation Generator
+
+# Core dependencies
+PyYAML==6.0.1
+markdown==3.5.2
+
+# PDF generation (optional)
+pdfkit==1.0.0
+
+# For HTML to PDF conversion, also install:
+# wkhtmltopdf (system package)
+# On Ubuntu/Debian: sudo apt-get install wkhtmltopdf
+# On macOS: brew install wkhtmltopdf
+
+# Development dependencies
+pytest==7.4.3
+black==23.11.0
+flake8==6.1.0
+
+# GitHub Actions dependencies
+actions-toolkit==0.1.0
