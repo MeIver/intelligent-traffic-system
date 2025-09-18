@@ -2,130 +2,127 @@
 
 ## System Overview
 
-The Intelligent Traffic System API provides real-time traffic data management, traffic flow optimization, and intelligent routing capabilities for smart city infrastructure. This RESTful API enables integration with traffic sensors, cameras, and control systems to optimize urban mobility.
+The Intelligent Traffic System API provides comprehensive access to real-time traffic data, traffic light control, congestion monitoring, and route optimization services. This RESTful API enables developers to integrate traffic management capabilities into their applications.
 
 **Base URL**: `https://api.traffic.example.com/v1`
+**API Version**: 1.0.0
 **Protocol**: HTTPS
-**Content-Type**: `application/json`
+
+### Key Features
+- Real-time traffic flow monitoring
+- Traffic light control and scheduling
+- Congestion detection and alerts
+- Route optimization and navigation
+- Historical traffic data analysis
+- Intersection management
 
 ## API Authentication
 
 ### API Key Authentication
-All endpoints require authentication via API key. Include your API key in the request header:
+All API endpoints require authentication using an API key. Include your API key in the `X-API-Key` header of each request.
 
 ```http
-Authorization: Bearer YOUR_API_KEY
+GET /traffic/flow HTTP/1.1
+Host: api.traffic.example.com
+X-API-Key: your-api-key-here
+Content-Type: application/json
 ```
 
 ### Obtaining API Keys
-1. Register at the Traffic Management Portal
-2. Generate API keys with appropriate permissions
-3. Keys are rate-limited based on subscription tier
+1. Register for a developer account at the Traffic System Developer Portal
+2. Generate API keys from your dashboard
+3. Keep your API keys secure and never expose them in client-side code
 
-### Token Refresh
-Long-lived operations may require token refresh:
-```http
-POST /auth/refresh
-Authorization: Bearer EXPIRED_TOKEN
-Content-Type: application/json
-
-{
-  "refresh_token": "your_refresh_token"
-}
-```
+### Rate Limiting Headers
+Responses include rate limit information:
+- `X-RateLimit-Limit`: Maximum requests per hour
+- `X-RateLimit-Remaining`: Remaining requests
+- `X-RateLimit-Reset`: UTC timestamp when limit resets
 
 ## Traffic Endpoints
 
-### Traffic Data Collection
+### Traffic Flow Monitoring
 
-#### Get Real-time Traffic Data
+#### Get Real-time Traffic Flow
 ```http
-GET /traffic/real-time
+GET /traffic/flow?location={latitude},{longitude}&radius={meters}
 ```
 
 **Parameters**:
-- `location` (required): Geographic coordinates or area ID
-- `radius` (optional): Search radius in meters (default: 1000)
-- `sensor_types` (optional): Comma-separated sensor types
+- `location`: Latitude and longitude coordinates (required)
+- `radius`: Search radius in meters (default: 1000)
+- `vehicle_types`: Comma-separated vehicle types (car, bus, truck, bicycle)
 
 **Response**:
 ```json
 {
-  "timestamp": "2024-01-15T10:30:00Z",
-  "location": {
-    "latitude": 40.7128,
-    "longitude": -74.0060,
-    "area_id": "NYC_DT"
-  },
-  "traffic_flow": {
-    "vehicle_count": 1250,
-    "average_speed": 45.2,
-    "congestion_level": "MODERATE"
-  },
-  "sensor_data": [
-    {
-      "sensor_id": "cam_001",
-      "type": "CAMERA",
-      "status": "ACTIVE",
-      "data": {
-        "vehicle_types": {"CAR": 800, "TRUCK": 150, "BUS": 50},
-        "lane_occupancy": [0.75, 0.68, 0.82]
-      }
-    }
-  ]
-}
-```
-
-#### Submit Traffic Incident
-```http
-POST /traffic/incidents
-Content-Type: application/json
-
-{
-  "type": "ACCIDENT",
   "location": {
     "latitude": 40.7128,
     "longitude": -74.0060
   },
-  "severity": "HIGH",
-  "description": "Multi-vehicle collision on main road",
-  "affected_lanes": [1, 2]
+  "traffic_flow": {
+    "vehicles_per_minute": 45,
+    "average_speed": 28.5,
+    "congestion_level": "moderate",
+    "vehicle_distribution": {
+      "cars": 65,
+      "buses": 15,
+      "trucks": 12,
+      "bicycles": 8
+    }
+  },
+  "timestamp": "2024-01-15T10:30:00Z"
 }
 ```
 
-### Traffic Control
+### Traffic Light Control
 
-#### Adjust Traffic Signals
+#### Get Traffic Light Status
 ```http
-PUT /control/signals/{signal_id}
+GET /traffic-lights/{intersection_id}
+```
+
+**Parameters**:
+- `intersection_id`: Unique identifier for the intersection
+
+#### Update Traffic Light Timing
+```http
+POST /traffic-lights/{intersection_id}/timing
 Content-Type: application/json
 
 {
-  "pattern": "EMERGENCY",
-  "duration": 300,
-  "priority": "HIGH"
+  "green_duration": 30,
+  "yellow_duration": 5,
+  "red_duration": 25,
+  "pattern": "standard"
 }
 ```
 
-#### Get Signal Status
+### Congestion Monitoring
+
+#### Get Congestion Alerts
 ```http
-GET /control/signals/{signal_id}
+GET /congestion/alerts?severity={level}&area={bounding_box}
 ```
+
+**Parameters**:
+- `severity`: low, moderate, high, severe
+- `area`: Bounding box coordinates (min_lat,min_lon,max_lat,max_lon)
 
 ### Route Optimization
 
 #### Calculate Optimal Route
 ```http
-POST /routes/calculate
+POST /routes/optimize
 Content-Type: application/json
 
 {
-  "origin": {"latitude": 40.7128, "longitude": -74.0060},
-  "destination": {"latitude": 40.7589, "longitude": -73.9851},
-  "vehicle_type": "CAR",
+  "origin": {"lat": 40.7128, "lng": -74.0060},
+  "destination": {"lat": 40.7589, "lng": -73.9851},
   "preferences": {
     "avoid_tolls": true,
-    "minimize_time": true
+    "avoid_highways": false,
+    "prefer_shortest": true
   }
 }
 ```
@@ -133,54 +130,81 @@ Content-Type: application/json
 ## Data Models
 
 ### TrafficFlow Object
-```json
-{
-  "vehicle_count": 1250,
-  "average_speed": 45.2,
-  "congestion_level": "MODERATE",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "predicted_trend": "INCREASING"
-}
+```yaml
+TrafficFlow:
+  type: object
+  properties:
+    location:
+      $ref: '#/components/schemas/GeoLocation'
+    vehicles_per_minute:
+      type: integer
+      description: Number of vehicles passing per minute
+    average_speed:
+      type: number
+      format: float
+      description: Average speed in km/h
+    congestion_level:
+      type: string
+      enum: [low, moderate, high, severe]
+    vehicle_distribution:
+      $ref: '#/components/schemas/VehicleDistribution'
+    timestamp:
+      type: string
+      format: date-time
 ```
 
-### TrafficIncident Object
-```json
-{
-  "id": "inc_001",
-  "type": "ACCIDENT",
-  "location": {
-    "latitude": 40.7128,
-    "longitude": -74.0060,
-    "street": "Main Street",
-    "intersection": "5th Avenue"
-  },
-  "severity": "HIGH",
-  "description": "Multi-vehicle collision",
-  "start_time": "2024-01-15T10:25:00Z",
-  "estimated_clearance": "2024-01-15T11:30:00Z",
-  "affected_lanes": [1, 2],
-  "status": "ACTIVE"
-}
+### GeoLocation Object
+```yaml
+GeoLocation:
+  type: object
+  properties:
+    latitude:
+      type: number
+      format: float
+      minimum: -90
+      maximum: 90
+    longitude:
+      type: number
+      format: float
+      minimum: -180
+      maximum: 180
 ```
 
-### TrafficSignal Object
-```json
-{
-  "id": "signal_001",
-  "location": {
-    "latitude": 40.7128,
-    "longitude": -74.0060,
-    "intersection": "Main St & 5th Ave"
-  },
-  "current_pattern": "NORMAL",
-  "phase_timings": {
-    "green": 30,
-    "yellow": 5,
-    "red": 25
-  },
-  "status": "OPERATIONAL",
-  "last_maintenance": "2024-01-10T08:00:00Z"
-}
+### VehicleDistribution Object
+```yaml
+VehicleDistribution:
+  type: object
+  properties:
+    cars:
+      type: integer
+      description: Percentage of cars
+    buses:
+      type: integer
+      description: Percentage of buses
+    trucks:
+      type: integer
+      description: Percentage of trucks
+    bicycles:
+      type: integer
+      description: Percentage of bicycles
+```
+
+### TrafficLight Object
+```yaml
+TrafficLight:
+  type: object
+  properties:
+    intersection_id:
+      type: string
+    current_state:
+      type: string
+      enum: [red, yellow, green]
+    time_remaining:
+      type: integer
+      description: Seconds remaining in current state
+    next_state:
+      type: string
+      enum: [red, yellow, green]
 ```
 
 ## Rate Limiting
@@ -191,62 +215,114 @@ Content-Type: application/json
 - **Professional Tier**: 10,000 requests/hour
 - **Enterprise Tier**: Custom limits
 
-### Rate Limit Headers
-Responses include rate limit information:
-```http
-X-RateLimit-Limit: 1000
-X-RateLimit-Remaining: 850
-X-RateLimit-Reset: 1705312800
-```
+### Endpoint-specific Limits
+- Traffic flow endpoints: 60 requests/minute
+- Traffic light control: 30 requests/minute
+- Route optimization: 20 requests/minute
 
 ### Best Practices
 - Implement exponential backoff for retries
 - Cache responses when appropriate
-- Monitor rate limit headers
-- Use webhooks for real-time updates instead of polling
+- Monitor rate limit headers in responses
 
 ## Error Handling
 
-### HTTP Status Codes
+### Standard Error Response
+All error responses follow this format:
 
-| Code | Description |
-|------|-------------|
-| 200 | Success |
-| 201 | Created |
-| 400 | Bad Request - Invalid parameters |
-| 401 | Unauthorized - Invalid API key |
-| 403 | Forbidden - Insufficient permissions |
-| 404 | Not Found - Resource doesn't exist |
-| 429 | Too Many Requests - Rate limit exceeded |
-| 500 | Internal Server Error |
-| 503 | Service Unavailable - Maintenance |
-
-### Error Response Format
 ```json
 {
   "error": {
-    "code": "RATE_LIMIT_EXCEEDED",
-    "message": "Rate limit of 1000 requests per hour exceeded",
+    "code": "error_code",
+    "message": "Human-readable error message",
     "details": {
-      "limit": 1000,
-      "remaining": 0,
-      "reset_in": 3598
-    },
-    "request_id": "req_123456789",
-    "timestamp": "2024-01-15T10:30:00Z"
+      "field": "additional error details"
+    }
   }
 }
 ```
 
 ### Common Error Codes
-- `INVALID_API_KEY`: Authentication failed
-- `RATE_LIMIT_EXCEEDED`: Too many requests
-- `INVALID_LOCATION`: Geographic coordinates invalid
-- `SENSOR_UNAVAILABLE`: Requested sensor not operational
-- `ROUTE_UNAVAILABLE`: No valid route found
-- `MAINTENANCE_MODE`: System undergoing maintenance
+
+#### 400 - Bad Request
+- `invalid_parameters`: Missing or invalid parameters
+- `invalid_coordinates`: Invalid geographic coordinates
+- `unsupported_vehicle_type`: Unsupported vehicle type specified
+
+#### 401 - Unauthorized
+- `missing_api_key`: API key not provided
+- `invalid_api_key`: Invalid or expired API key
+
+#### 403 - Forbidden
+- `rate_limit_exceeded`: Rate limit exceeded
+- `insufficient_permissions`: User lacks required permissions
+
+#### 404 - Not Found
+- `intersection_not_found`: Specified intersection not found
+- `route_not_found`: No route could be calculated
+
+#### 429 - Too Many Requests
+- `rate_limit_exceeded`: Too many requests in given timeframe
+
+#### 500 - Internal Server Error
+- `internal_error`: Unexpected server error
+- `service_unavailable`: Service temporarily unavailable
+
+### Error Response Examples
+
+**Invalid API Key**:
+```json
+{
+  "error": {
+    "code": "invalid_api_key",
+    "message": "The provided API key is invalid or expired",
+    "details": {
+      "key": "abc123-invalid-key"
+    }
+  }
+}
+```
+
+**Rate Limit Exceeded**:
+```json
+{
+  "error": {
+    "code": "rate_limit_exceeded", 
+    "message": "Rate limit exceeded. Please try again later.",
+    "details": {
+      "limit": 100,
+      "remaining": 0,
+      "reset": "2024-01-15T11:00:00Z"
+    }
+  }
+}
+```
 
 ### Retry Recommendations
-- 429 errors: Wait for reset time + random jitter
-- 5xx errors: Exponential backoff with max 3 retries
-- Network errors: Immediate retry with circuit breaker
+- For 429 errors: Wait until rate limit resets
+- For 5xx errors: Implement exponential backoff with jitter
+- For network errors: Retry with increasing delays
+
+## Best Practices
+
+### Request Optimization
+- Use appropriate pagination for large datasets
+- Specify only needed fields in responses
+- Cache responses when possible
+- Batch requests when appropriate
+
+### Security Considerations
+- Never expose API keys in client-side code
+- Use HTTPS for all requests
+- Rotate API keys regularly
+- Monitor usage patterns for anomalies
+
+### Performance Tips
+- Use compression for large responses
+- Implement client-side caching
+- Monitor rate limit headers
+- Use webhooks for real-time updates instead of polling
+
+---
+
+*This documentation was automatically generated from the OpenAPI specification. Last updated: {{timestamp}}*
