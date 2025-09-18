@@ -1,26 +1,26 @@
-name: Traffic API Documentation Automation
+name: Traffic API Documentation Generation
 
 on:
   # Schedule: Run daily at 02:00 UTC
   schedule:
     - cron: '0 2 * * *'
   
-  # Trigger on pull requests that modify API-related files
-  pull_request:
-    paths:
-      - 'openapi/**'
-      - 'docs/api/templates/**'
-      - 'scripts/traffic-api-docs-generator.py'
-      - '.github/workflows/traffic-api-docs.yml'
-  
   # Manual trigger
   workflow_dispatch:
     inputs:
-      validate_only:
-        description: 'Only validate without generating docs'
+      force_regenerate:
+        description: 'Force regenerate all documentation'
         required: false
         default: 'false'
         type: boolean
+  
+  # Trigger on PR events related to API changes
+  pull_request:
+    paths:
+      - 'openapi/**'
+      - 'scripts/traffic-api-docs-generator.py'
+      - 'docs/api/templates/**'
+    branches: [main, develop]
 
 jobs:
   generate-docs:
@@ -45,114 +45,46 @@ jobs:
         # Install documentation generation tools
         npm install -g redoc-cli
 
-    - name: Create generated docs directory
-      run: mkdir -p docs/api/generated
-
-    - name: Generate API documentation
-      run: |
-        python scripts/traffic-api-docs-generator.py \
-          --openapi openapi/traffic-api.yaml \
-          --output docs/api/generated \
-          --format all
-      env:
-        # Add any required environment variables here
-        NODE_OPTIONS: "--max_old_space_size=4096"
-
     - name: Validate OpenAPI specification
       run: |
         python scripts/traffic-api-docs-generator.py \
           --openapi openapi/traffic-api.yaml \
-          --validate-only
+          --validate
 
-    - name: Check for documentation changes
-      id: docs-changes
+    - name: Generate documentation
       run: |
-        # Check if generated documentation has changed
-        if git diff --name-only --exit-code docs/api/generated/; then
-          echo "No documentation changes detected"
-          echo "has_changes=false" >> $GITHUB_OUTPUT
-        else
-          echo "Documentation changes detected"
-          echo "has_changes=true" >> $GITHUB_OUTPUT
-        fi
+        # Create output directory
+        mkdir -p generated-docs
+        
+        # Generate all documentation formats
+        python scripts/traffic-api-docs-generator.py \
+          --openapi openapi/traffic-api.yaml \
+          --output generated-docs \
+          --format all \
+          --template docs/api/templates/traffic-api-template.md
 
-    - name: Upload generated documentation
+    - name: Generate validation report
+      run: |
+        python scripts/traffic-api-docs-generator.py \
+          --openapi openapi/traffic-api.yaml \
+          --report generated-docs/validation-report.json
+
+    - name: Upload documentation artifacts
       uses: actions/upload-artifact@v4
       with:
         name: api-documentation
-        path: docs/api/generated/
+        path: generated-docs/
         retention-days: 7
 
-    - name: Upload validation report
-      uses: actions/upload-artifact@v4
+    - name: Deploy to GitHub Pages (if enabled)
+      if: github.event_name == 'schedule' || github.event.inputs.force_regenerate == 'true'
+      uses: peaceiris/actions-gh-pages@v3
       with:
-        name: validation-report
-        path: docs/api/generated/validation-report.md
-        retention-days: 7
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./generated-docs
+        keep_files: true
 
-    - name: Commit and push documentation updates (on schedule)
-      if: github.event_name == 'schedule' && steps.docs-changes.outputs.has_changes == 'true'
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add docs/api/generated/
-        git commit -m "docs: auto-update API documentation [skip ci]"
-        git push origin HEAD:${{ github.ref }}
-
-    - name: Create PR comment with validation results
-      if: github.event_name == 'pull_request'
-      uses: actions/github-script@v7
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        script: |
-          const fs = require('fs');
-          const reportPath = 'docs/api/generated/validation-report.md';
-          
-          if (fs.existsSync(reportPath)) {
-            const report = fs.readFileSync(reportPath, 'utf8');
-            
-            // Extract summary for PR comment
-            const summaryMatch = report.match(/## Summary[\s\S]*?(?=##|$)/);
-            const errorsMatch = report.match(/## Errors[\s\S]*?(?=##|$)/);
-            const warningsMatch = report.match(/## Warnings[\s\S]*?(?=##|$)/);
-            
-            let comment = '## 📋 API Documentation Validation Report\n\n';
-            
-            if (summaryMatch) {
-              comment += summaryMatch[0] + '\n';
-            }
-            
-            if (errorsMatch) {
-              comment += '### ❌ Validation Errors\n';
-              comment += errorsMatch[0].replace('## Errors', '') + '\n';
-            }
-            
-            if (warningsMatch) {
-              comment += '### ⚠️ Validation Warnings\n';
-              comment += warningsMatch[0].replace('## Warnings', '') + '\n';
-            }
-            
-            if (!errorsMatch && !warningsMatch) {
-              comment += '✅ All validations passed successfully!\n';
-            }
-            
-            comment += '\n---\n*Generated by Traffic API Documentation Automation*';
-            
-            github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: comment
-            });
-          }
-
-    - name: Fail on validation errors
-      if: failure()
-      run: |
-        echo "❌ Documentation generation failed. Check the validation report for details."
-        exit 1
-
-  quality-check:
+  validate-docs:
     runs-on: ubuntu-latest
     needs: generate-docs
     
@@ -160,101 +92,131 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Download generated documentation
+    - name: Download documentation artifacts
       uses: actions/download-artifact@v4
       with:
         name: api-documentation
-        path: docs/api/generated/
+        path: generated-docs
 
-    - name: Run documentation quality checks
+    - name: Validate documentation format
       run: |
-        # Check if generated files exist and are valid
-        if [ ! -f "docs/api/generated/traffic-api-documentation.md" ]; then
-          echo "❌ Generated Markdown documentation not found"
+        # Check if documentation files were generated
+        if [ ! -f "generated-docs/api-documentation.md" ]; then
+          echo "Error: Markdown documentation not generated"
           exit 1
         fi
         
-        if [ ! -f "docs/api/generated/validation-report.md" ]; then
-          echo "❌ Validation report not found"
+        if [ ! -f "generated-docs/api-documentation.html" ]; then
+          echo "Warning: HTML documentation not generated"
+        fi
+        
+        if [ ! -f "generated-docs/validation-report.json" ]; then
+          echo "Error: Validation report not generated"
           exit 1
         fi
         
-        # Basic content validation
-        if ! grep -q "Intelligent Traffic System" docs/api/generated/traffic-api-documentation.md; then
-          echo "❌ Generated documentation missing expected content"
+        # Check documentation content
+        if ! grep -q "Intelligent Traffic System" generated-docs/api-documentation.md; then
+          echo "Error: Documentation missing required content"
           exit 1
         fi
         
-        echo "✅ Documentation quality checks passed"
+        echo "✓ Documentation validation passed"
 
-  deploy-preview:
+    - name: Run documentation tests
+      run: |
+        # Run any documentation-specific tests
+        python scripts/test-docs-generator.py
+
+  report-generation:
     runs-on: ubuntu-latest
-    needs: [generate-docs, quality-check]
-    if: github.event_name == 'pull_request'
+    needs: [generate-docs, validate-docs]
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Download generated documentation
+    - name: Download documentation artifacts
       uses: actions/download-artifact@v4
       with:
         name: api-documentation
-        path: docs/api/generated/
+        path: generated-docs
 
-    - name: Setup Pages
-      uses: actions/configure-pages@v4
+    - name: Create generation report
+      run: |
+        # Parse validation report
+        REPORT=$(cat generated-docs/validation-report.json)
+        VALIDATION_ERRORS=$(echo "$REPORT" | jq -r '.validation_errors | length')
+        ENDPOINT_COUNT=$(echo "$REPORT" | jq -r '.endpoint_count')
+        IS_VALID=$(echo "$REPORT" | jq -r '.is_valid')
+        
+        # Create summary
+        echo "## API Documentation Generation Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- **Timestamp:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "- **OpenAPI File:** openapi/traffic-api.yaml" >> $GITHUB_STEP_SUMMARY
+        echo "- **Validation Status:** $(if [ "$IS_VALID" = "true" ]; then echo '✅ PASSED'; else echo '❌ FAILED'; fi)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Validation Errors:** $VALIDATION_ERRORS" >> $GITHUB_STep_SUMMARY
+        echo "- **Endpoints Documented:** $ENDPOINT_COUNT" >> $GITHUB_STEP_SUMMARY
+        echo "- **Generated Formats:** Markdown, HTML, PDF" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "$VALIDATION_ERRORS" -gt 0 ]; then
+          echo "### Validation Errors" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "$REPORT" | jq -r '.validation_errors[]' | while read error; do
+            echo "- ❌ $error" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "### Generated Files" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- 📄 [Markdown Documentation](generated-docs/api-documentation.md)" >> $GITHUB_STEP_SUMMARY
+        echo "- 🌐 [HTML Documentation](generated-docs/api-documentation.html)" >> $GITHUB_STEP_SUMMARY
+        echo "- 📋 [Validation Report](generated-docs/validation-report.json)" >> $GITHUB_STEP_SUMMARY
 
-    - name: Upload artifact
-      uses: actions/upload-pages-artifact@v3
+    - name: Upload validation report
+      uses: actions/upload-artifact@v4
       with:
-        path: docs/api/generated/
+        name: validation-report
+        path: generated-docs/validation-report.json
+        retention-days: 30
 
-    - name: Deploy to GitHub Pages
-      id: deployment
-      uses: actions/deploy-pages@v4
-      
-    - name: Comment PR with preview link
-      uses: actions/github-script@v7
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        script: |
-          github.rest.issues.createComment({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number,
-            body: `🌐 **Documentation Preview Available**\n\nView the generated API documentation: ${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/deployments/${context.payload.deployment.statuses_url}?environment=github-pages`
-          });
-
-  notify:
+  notify-completion:
     runs-on: ubuntu-latest
-    needs: [generate-docs, quality-check]
+    needs: report-generation
     if: always()
     
     steps:
-    - name: Download validation report
-      uses: actions/download-artifact@v4
-      with:
-        name: validation-report
-        path: ./
+    - name: Check workflow status
+      run: |
+        if [ "${{ job.status }}" = "success" ]; then
+          echo "WORKFLOW_STATUS=success" >> $GITHUB_ENV
+        else
+          echo "WORKFLOW_STATUS=failure" >> $GITHUB_ENV
+        fi
 
     - name: Send notification on failure
-      if: failure()
-      uses: actions/github-script@v7
+      if: env.WORKFLOW_STATUS == 'failure'
+      uses: actions/github-script@v6
       with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
-          const fs = require('fs');
-          
-          if (fs.existsSync('validation-report.md')) {
-            const report = fs.readFileSync('validation-report.md', 'utf8');
-            
-            // Send notification to relevant teams
-            github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: '🚨 API Documentation Generation Failed',
-              body: `API documentation generation failed for ${context.sha}.\n\n**Validation Report:**\n\n\`\`\`\n${report}\n\`\`\``,
-              labels: ['documentation', 'bug']
-            });
-          }
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: "❌ API documentation generation failed. Please check the workflow logs for details."
+          })
+
+    - name: Send notification on success for scheduled runs
+      if: env.WORKFLOW_STATUS == 'success' && github.event_name == 'schedule'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: "✅ API documentation successfully generated and validated. Generated files are available as workflow artifacts."
+          })
